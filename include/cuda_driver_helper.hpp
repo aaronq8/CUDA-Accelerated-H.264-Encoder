@@ -3,7 +3,7 @@
 #include <cuda.h>
 
 namespace cuda {
-static void ck(CUresult result) {
+static void chk(CUresult result) {
   if (result != CUDA_SUCCESS) {
     const char *name = nullptr;
     const char *msg = nullptr;
@@ -18,15 +18,17 @@ static void ck(CUresult result) {
   }
 }
 
-static void init_gpu(CUdevice &gpu) {
-  cuda::ck(cuInit(0));
+static void init_gpu(CUdevice &gpu, CUcontext &cu_ctx) {
+  cuda::chk(cuInit(0));
   LOG(INFO) << "cuda initialised..";
   // assign device
-  cuda::ck(cuDeviceGet(&gpu, 0));
+  cuda::chk(cuDeviceGet(&gpu, 0));
 
   char gpu_name[100];
-  cuda::ck(cuDeviceGetName(gpu_name, sizeof(gpu_name), gpu));
+  cuda::chk(cuDeviceGetName(gpu_name, sizeof(gpu_name), gpu));
   LOG(INFO) << "Running on GPU : " << gpu_name;
+  chk(cuCtxCreate(&cu_ctx, 0, gpu));
+  LOG(INFO) << "Initialised CU Context...";
 }
 
 }; // namespace cuda

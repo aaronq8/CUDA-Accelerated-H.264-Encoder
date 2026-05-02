@@ -38,6 +38,17 @@ find_library(CUDA_DRIVER_LIB
 
 find_package(CUDAToolkit REQUIRED)
 
+# for parsing input cli params
+find_package(Boost REQUIRED COMPONENTS program_options)
+
+# for FFMPEG Demuxer
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+    libavformat
+    libavcodec
+    libavutil
+)
 
 add_executable(encoder 
     src/main.cpp
@@ -60,4 +71,6 @@ target_link_libraries(encoder PRIVATE
     ${CUDA_DRIVER_LIB}
     dl
     pthread
+    Boost::program_options
+    PkgConfig::FFMPEG
 )
