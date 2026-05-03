@@ -1,3 +1,6 @@
+#include <cassert>
+#include <cstdint>
+#include <cstdlib>
 #include <nvcuvid.h>
 
 #include "FFmpegDemuxer.h"
@@ -54,11 +57,70 @@ int main(int argc, char **argv) {
   CUcontext cu_ctx = NULL;
   cuda::init_gpu(gpu, cu_ctx);
   // Main Decode Loop
-  std::ofstream fpout("./output_frames", std::ios::out | std::ios::binary);
+  std::ofstream fpout("./output_frames.yuv", std::ios::out | std::ios::binary);
   FFmpegDemuxer demuxer{config.input_video_file_path.c_str()};
   auto input_vid_codec = demuxer.GetVideoCodec();
-  Rect crop_rect{};
-  Dim resize_dim{};
   NvDecoder dec(cu_ctx, false, FFmpeg2NvCodecId(input_vid_codec));
+  int packet_sz = 0;
+  uint8_t *packet = NULL, *frame;
+  int num_frames_cur_packet = 0, tot_frames = 0;
+  do {
+    demuxer.Demux(&packet, &packet_sz);
+    num_frames_cur_packet = dec.Decode(packet, packet_sz);
+    if (!tot_frames && num_frames_cur_packet) {
+      LOG(INFO) << dec.GetVideoInfo();
+    }
+    for (int i = 0; i < num_frames_cur_packet; i++) {
+      frame = dec.GetFrame();
+      // https: // gist.github.com/Jim-Bar/3cbba684a71d1a9d468a6711a6eddbeb
+      /*
+      Raw frame
+      Y0 : [pixels][padding]
+      Y1 : [pixels][padding]
+      ....
+      YH :
+      UV0 : [pixels]
+      UV1 : [pixels]
+      ....
+      UVH/2 :
+      */
+      YuvConverter<uint8_t> converter8(dec.GetWidth(), dec.GetHeight(),
+                                       dec.GetOutputChromaFormat());
+      converter8.UVInterleavedToPlanar(frame);
+
+      // convert to greyscale
+      uint8_t *chroma_section = frame + dec.GetLumaPlaneSize();
+      for (int i = 0; i < dec.GetChromaHeight(); i++) {
+        uint8_t *chroma_row = chroma_section + i * dec.GetWidth();
+        for (int j = 0; j < dec.GetWidth(); j++) {
+          chroma_row[j] = 128;
+        }
+      }
+      // dump YUV to disk
+      if (dec.GetWidth() == dec.GetDecodeWidth()) {
+        fpout.write(reinterpret_cast<char *>(frame), dec.GetFrameSize());
+      } else {
+        // If decoded frame width is != output buffer means padding was appended
+        // we need to skip last few bytes
+        assert(dec.GetDecodeWidth() < dec.GetWidth());
+        for (auto i = 0; i < dec.GetHeight(); i++) {
+          fpout.write(reinterpret_cast<char *>(frame),
+                      dec.GetDecodeWidth() * dec.GetBPP());
+          // skip over Luma pixels
+          frame += (dec.GetDecodeWidth() * dec.GetBPP());
+          // skip over padding
+          frame += ((dec.GetWidth() - dec.GetDecodeWidth()) * dec.GetBPP());
+        }
+        // dump Chroma
+        fpout.write(reinterpret_cast<char *>(frame), dec.GetChromaPlaneSize());
+      }
+    }
+    tot_frames += num_frames_cur_packet;
+  } while (packet_sz);
+  LOG(INFO) << "Total frames.. : " << tot_frames;
+  fpout.close();
+  // use ffplay to play the decoded raw frames
+  std::system("ffplay -f rawvideo -pixel_format yuv420p -video_size 1920x1080 "
+              "-framerate 30 output_frames.yuv");
   return 0;
 }
